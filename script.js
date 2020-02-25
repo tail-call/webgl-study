@@ -18,11 +18,12 @@ class Screen {
 
         this.locations = {
             vertexPosition: this.gl.getAttribLocation(this.shaderProgram, 'aVertexPosition'),
+            vertexColor: this.gl.getAttribLocation(this.shaderProgram, 'aVertexColor'),
             modelViewMatrix: this.gl.getUniformLocation(this.shaderProgram, 'uModelViewMatrix'),
             projectionMatrix: this.gl.getUniformLocation(this.shaderProgram, 'uProjectionMatrix'),
         };
 
-        this.positionBuffers = [];
+        this.models = [];
     }
 
     clear(red = 0, green = 0, blue = 0) {
@@ -35,21 +36,26 @@ class Screen {
     vertexShaderSource() {
         return `
 attribute vec4 aVertexPosition;
+attribute vec4 aVertexColor;
+
 uniform mat4 uModelViewMatrix;
 uniform mat4 uProjectionMatrix;
 
+varying lowp vec4 vColor;
+
 void main() {
-    //gl_Position = aVertexPosition;
-    //gl_Position += vec4(uProjectionMatrix[1][2] / 4.0, 0, 0, 0);
     gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+    vColor = aVertexColor;
 }
 `;
     }
 
     fragmentShaderSource() {
         return `
+varying lowp vec4 vColor;
+
 void main() {
-    gl_FragColor = vec4(1.0, 1.0, 0.8, 1.0);
+    gl_FragColor = vColor;
 }
 `;
     }
@@ -88,15 +94,21 @@ void main() {
         return program;
     }
 
-    addVertices(vertices) {
+    addModel({ vertices, colors }) {
         const gl = this.gl;
 
         const positionBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
 
-        this.positionBuffers.push(positionBuffer);
+        const colorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+
+        this.models.push({
+            positionBuffer,
+            colorBuffer,
+        });
     }
 }
 
@@ -106,19 +118,29 @@ const screen = new Screen({
     height: 480,
 });
 
-screen.addVertices([
+screen.addModel({ vertices: [
     -1,  1,  0,
      1,  1,  0,
     -1, -1, -1,
      1, -1, -1,
-]);
+], colors: [
+    1,1,1,1,
+    1,1,0,1,
+    1,0,1,1,
+    0,1,1,1,
+]});
 
-screen.addVertices([
+screen.addModel({ vertices: [
     -1,  1, 0,
      1,  1, 0,
     -1, -1, 1,
      1, -1, 1,
-]);
+], colors: [
+    1,1,1,1,
+    1,0,0,1,
+    0,0,1,1,
+    0,1,0,1,
+]});
 
 function projectionMatrix({ fieldOfView, aspectRatio, zNear, zFar }) {
     const projectionMatrix = mat4.create();
@@ -132,7 +154,7 @@ function projectionMatrix({ fieldOfView, aspectRatio, zNear, zFar }) {
 }
 
 function draw(screen) {
-    screen.clear(0.5, 1.0);
+    screen.clear(0.2, 0.6, 0.3);
 
     const gl = screen.gl;
 
@@ -145,33 +167,51 @@ function draw(screen) {
     const zAxis = vec3.create();
     vec3.add(zAxis, zAxis, [0, 0, 1]);
 
-    const factor =  performance.now() / 1000 / Math.PI;
+    const factor = performance.now() / 1000 / Math.PI;
 
     mat4.rotate(modelViewMatrix, modelViewMatrix, factor * 2, zAxis);
     mat4.rotate(modelViewMatrix, modelViewMatrix, factor * 3, xAxis);
     gl.uniformMatrix4fv(screen.locations.modelViewMatrix, false, modelViewMatrix);
 
-    for (let positionBuffer of screen.positionBuffers) {
-        const vertexDimensions = 3;
-        const dataType = gl.FLOAT;
-        const shouldNormalize = false;
+    for (let { positionBuffer, colorBuffer } of screen.models) {
         const stride = 0; // how many bytes to get from one set of values to the next
                           // 0 = use type and numComponents above
         const offset = 0; // how many bytes inside the buffer to start from
+        const shouldNormalize = false;
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-        gl.vertexAttribPointer(
-            screen.locations.vertexPosition,
-            vertexDimensions,
-            dataType,
-            shouldNormalize,
-            stride,
-            offset
-        );
-        gl.enableVertexAttribArray(screen.locations.vertexPosition);
+        {
+            const vertexDimensions = 3;
+            const dataType = gl.FLOAT;
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.vertexAttribPointer(
+                screen.locations.vertexPosition,
+                vertexDimensions,
+                dataType,
+                shouldNormalize,
+                stride,
+                offset
+            );
+            gl.enableVertexAttribArray(screen.locations.vertexPosition);
+        }
+
+        {
+            const colorDimensions = 4;
+            const dataType = gl.FLOAT;
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+            gl.vertexAttribPointer(
+                screen.locations.vertexColor,
+                colorDimensions,
+                dataType,
+                shouldNormalize,
+                stride,
+                offset
+            );
+            gl.enableVertexAttribArray(screen.locations.vertexColor);
+        }
 
         const vertexCount = 4;
-
         gl.drawArrays(gl.TRIANGLE_STRIP, offset, vertexCount);
     }
 
@@ -182,7 +222,6 @@ function draw(screen) {
     const gl = screen.gl;
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
-
 
     gl.uniformMatrix4fv(screen.locations.projectionMatrix, false, projectionMatrix({
         fieldOfView: 45,
